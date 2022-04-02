@@ -3,8 +3,8 @@ from bs4 import BeautifulSoup
 import boto3
 
 def lambda_handler(event, context):
-    client = boto3.client('firehose')
-    fire_data = []
+    firehose = boto3.client('firehose')
+    fire_data = ""
     for i in range(1,10):
         base_url = 'https://www.overnightoffice.com/blog/page/##/?orderby=price'
         apiBase = 'https://api.cauchon.io/ono'
@@ -25,7 +25,7 @@ def lambda_handler(event, context):
                     price = product_content.find("span", class_="woocommerce-Price-amount").text
                     description = ""
                     for p in product_soup.find("div", class_="woocommerce-product-details__short-description").find_all("p"):
-                        description += f'{p.text}\n'
+                        description += f'{p.text}###'
                     picture = product_content.find("figure", class_="woocommerce-product-gallery__wrapper").find("a")['href']
                     id = picture.split('/')[-1].split('.')[0]
                     b64 = requests.get(picture, stream=True)
@@ -34,8 +34,16 @@ def lambda_handler(event, context):
                     s3Data = b64.content
                     r = requests.put(f'{apiBase}/saveimage/{s3bucket}/{s3Key}', data=s3Data, headers=s3headers)
                     s3Image = f'https://{s3bucket}.s3.us-east-2.amazonaws.com/{s3Key}'
-                    headers = {'Content-Type': 'application/json'}
-                    product_data = {'productID': id, 'title': title, 'description': description, 'image': s3Image, 'price': price.strip('$').split('.')[0], 'quantity': '1', 'tags': ''}
-                    r = requests.post(f'{apiBase}/createproductstage', json=product_data, headers=headers)
-                    print(product_data)
+                    product_data = f'{{"productID": "{id}", "title": "{title}", "description": "{description}", "image": "{s3Image}", "price": {price.strip("$").split(".")[0]}, "quantity": "1", "tags": ""}}\n'
+                    fire_data += product_data
         else: break
+    if len(fire_data) > 0:
+        response = firehose.put_record_batch(
+            DeliveryStreamName='ono-product-deliver-stream',
+            Records=[
+                {
+                    'Data': fire_data.encode()
+                },
+            ]
+        )
+        print(response)
