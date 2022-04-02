@@ -1,0 +1,18 @@
+use case: I am a online business that wants to keep my prices in line with competitors that sell the same products
+
+solution:
+scan compitition products, identify if they have a lower price or new products
+
+ono front end
+	static website hosted in s3
+	api gateway
+	dynamo db
+	images saved in s3
+	route53
+
+web scraper - i should create a git repo for this
+	cron job scheduled to run once a month to scrape website for products
+	saves images to s3 and product details to ddb
+	generates logs
+		analyze logs to find new products/reduced proces
+		flag for new banner in UI
