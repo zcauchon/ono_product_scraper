@@ -1,10 +1,8 @@
 import requests
 from bs4 import BeautifulSoup
-import boto3
 
-def lambda_handler(event, context):
-    firehose = boto3.client('firehose')
-    fire_data = ""
+#def lambda_handler(event, context):
+if __name__ == '__main__':
     for i in range(1,10):
         base_url = 'https://www.overnightoffice.com/blog/page/##/?orderby=price'
         apiBase = 'https://api.cauchon.io/ono'
@@ -25,25 +23,29 @@ def lambda_handler(event, context):
                     price = product_content.find("span", class_="woocommerce-Price-amount").text
                     description = ""
                     for p in product_soup.find("div", class_="woocommerce-product-details__short-description").find_all("p"):
-                        description += f'{p.text}###'
+                        description += f'{p.text}\n'
                     picture = product_content.find("figure", class_="woocommerce-product-gallery__wrapper").find("a")['href']
                     id = picture.split('/')[-1].split('.')[0]
-                    b64 = requests.get(picture, stream=True)
-                    s3Key = picture.split('/')[-1]
-                    s3headers = {'Content-Type': 'image/jpeg'}
-                    s3Data = b64.content
-                    r = requests.put(f'{apiBase}/saveimage/{s3bucket}/{s3Key}', data=s3Data, headers=s3headers)
-                    s3Image = f'https://{s3bucket}.s3.us-east-2.amazonaws.com/{s3Key}'
-                    product_data = f'{{"productID": "{id}", "title": "{title}", "description": "{description}", "image": "{s3Image}", "price": {price.strip("$").split(".")[0]}, "quantity": "1", "tags": ""}}\n'
-                    fire_data += product_data
-        else: break
-    if len(fire_data) > 0:
-        response = firehose.put_record_batch(
-            DeliveryStreamName='ono-product-deliver-stream',
-            Records=[
-                {
-                    'Data': fire_data.encode()
-                },
-            ]
-        )
-        print(response)
+                    #logic to check if product ID is known to prod table
+                    #this works as long as volume is low, to be scallable it should be saved to s3 and analyzed with EMR/Glue cluster
+                    existing_product = requests.post(f'{apiBase}/getproduct/{id}')
+                    if existing_product.status_code == 200:
+                        headers = {'Content-Type': 'application/json'}
+                        s3headers = {'Content-Type': 'image/jpeg'}
+                        s3Key = picture.split('/')[-1]
+                        b64 = requests.get(picture, stream=True)
+                        s3Data = b64.content
+                        r = requests.put(f'{apiBase}/saveimage/{s3bucket}/{s3Key}', data=s3Data, headers=s3headers)
+                        s3Image = f'https://{s3bucket}.s3.us-east-2.amazonaws.com/{s3Key}'
+                        if existing_product.json()['body']['Count'] == 1:
+                            item = existing_product.json()['body']['Items'][0]
+                            price_num = float(price.strip('$').replace(',',''))
+                            if price_num < float(item['price']['N']):
+                                product_data = {'productID': id, 'title': title, 'description': description, 'image': s3Image, 'price': price_num, 'quantity': '1', 'tags': 'reduced'}
+                                r = requests.post(f'{apiBase}/createproduct', json=product_data, headers=headers)
+                                print(f"Reduced product: {r.json()['body']['Items'][0]}")
+                        else:
+                            #new product, save to prod db
+                            product_data = {'productID': id, 'title': title, 'description': description, 'image': s3Image, 'price': price_num, 'quantity': '1', 'tags': 'new'}
+                            r = requests.post(f'{apiBase}/createproduct', json=product_data, headers=headers)
+                            print(f"New product: {r.json()['body']['Items'][0]}")
